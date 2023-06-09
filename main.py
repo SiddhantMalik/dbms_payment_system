@@ -3,27 +3,42 @@ import re
 import random
 import hashlib
 import getpass
-import datetime
+from datetime import datetime
 import string
 from faker import Faker
+from termcolor import colored, cprint
 import uuid
-import requests
+
+cprint(
+    """
+
+████████╗██████╗░░█████╗░███╗░░██╗░██████╗███████╗██╗░░░██╗███╗░░██╗██████╗░░██████╗
+╚══██╔══╝██╔══██╗██╔══██╗████╗░██║██╔════╝██╔════╝██║░░░██║████╗░██║██╔══██╗██╔════╝
+░░░██║░░░██████╔╝███████║██╔██╗██║╚█████╗░█████╗░░██║░░░██║██╔██╗██║██║░░██║╚█████╗░
+░░░██║░░░██╔══██╗██╔══██║██║╚████║░╚═══██╗██╔══╝░░██║░░░██║██║╚████║██║░░██║░╚═══██╗
+░░░██║░░░██║░░██║██║░░██║██║░╚███║██████╔╝██║░░░░░╚██████╔╝██║░╚███║██████╔╝██████╔╝
+░░░╚═╝░░░╚═╝░░╚═╝╚═╝░░╚═╝╚═╝░░╚══╝╚═════╝░╚═╝░░░░░░╚═════╝░╚═╝░░╚══╝╚═════╝░╚═════╝░
+
+""",
+    "yellow",
+    "on_light_magenta",
+)
 
 # Establish connection with MySQL database
 db_host = "localhost"
 db_username = "root"
-db_password = "admin"
+db_password = "root"
 is_admin = False
-
+account_number = -1
 try:
     db = mysql.connector.connect(host=db_host, user=db_username, password=db_password)
-except Exception:
+except Exception as e:
     print("There was an error connnecting to the database")
-    exit
+    exit()
 
 cursor = db.cursor()
 
-# Create the funds_transfer_system database and accounts table if it doesn't exist
+# SQL query to initilaize the database
 cursor.execute("CREATE DATABASE IF NOT EXISTS funds_transfer_system")
 cursor.execute("use funds_transfer_system;")
 cursor.execute(
@@ -34,7 +49,8 @@ cursor.execute(
   username VARCHAR(255),
   email VARCHAR(255),
   phone_number VARCHAR(255),
-  passkey VARCHAR(255)
+  passkey VARCHAR(255), 
+  active BOOLEAN NOT NULL
   );
 """
 )
@@ -46,12 +62,28 @@ cursor.execute(
   ticket_description VARCHAR(255),
   ticket_status VARCHAR(255),
   ticket_date DATE,
-  ticket_time TIME,
+  ticket_time TIME
   );
 """
 )
 
 
+# Function to exit the program
+def exit_program():
+    print("Thank you for using our software. Have a nice day!")
+    exit()
+
+
+# Function to print error message
+def error():
+    cprint(
+        "An error has occurred. Please try again later or contact technical support for assistance!",
+        "red",
+        attrs=["bold"],
+    )
+
+
+# function to generate random password
 def generate_passkey(length=8):
     # Define characters to choose from
     characters = string.ascii_letters + string.digits + string.punctuation
@@ -61,18 +93,23 @@ def generate_passkey(length=8):
 
     return passkey
 
+
+# Function to hash the passkey before storing into database
 def hash_passkey(passkey):
-    
-    hashed_passkey = hashlib.sha256(passkey.encode('utf-8')).hexdigest()
+    hashed_passkey = hashlib.sha256(passkey.encode("utf-8")).hexdigest()
     return hashed_passkey
 
+
+# Function to verify phone number
 def verify_phone_number(phone_number):
     phone_number_pattern = r"^(?:\+?\d{1,3}\s?)?(?:\(\d{1,}\)|\d{1,})[-.\s/]?\d{1,}[-.\s/]?\d{1,}[-.\s/]?\d{1,}(?:\s?(?:x|ext)\d{1,})?$|^(\+\d{1,3})(\d{1,})$"
-    if re.match(phone_number_pattern, phone_number):
+    if re.match(phone_number_pattern, str(phone_number)):
         return True
     else:
         return False
 
+
+# Function to verify email id
 def verify_email(email):
     email_pattern = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
     if re.match(email_pattern, email):
@@ -81,10 +118,13 @@ def verify_email(email):
         return False
 
 
-def push_account(balance, username, email, phone_number, passkey, account_number=""):
+# Function to push account details to the server
+def push_account(
+    username, email, phone_number, passkey, balance=float(0), account_number=""
+):
     try:
         # encrypt the passkey
-        # hashed_passkey = hash_passkey(passkey)
+        hashed_passkey = hash_passkey(passkey)
 
         # Check if the email id is valid
         if verify_email(email) and verify_phone_number(phone_number):
@@ -94,69 +134,84 @@ def push_account(balance, username, email, phone_number, passkey, account_number
                 try:
                     cursor.execute(
                         "INSERT INTO accounts (account_number, balance, username, email, phone_number, passkey) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (account_number, balance, username, email, phone_number, hashed_passkey),
+                        (
+                            account_number,
+                            balance,
+                            username,
+                            email,
+                            phone_number,
+                            hashed_passkey,
+                        ),
                     )
                 except Exception as e:
-                    print("Erorr inserting account. Same account_number exists in database")
+                    print(
+                        "Error inserting account. Same account_number exists in database",
+                        "red",
+                        attrs=["bold"],
+                    )
             else:
                 cursor.execute(
-                    "INSERT INTO accounts ( balance, username, email, phone_number, passkey) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO accounts ( balance, username, email, phone_number, passkey, active) VALUES (%s, %s, %s, %s, %s, 1)",
                     (balance, username, email, phone_number, hashed_passkey),
                 )
 
             db.commit()
+
             # Fetch the generated account number from the database
+            account_number = cursor.lastrowid
 
             table_username = f"transaction_history_{account_number}"
 
             # Create the user's transaction history table
             cursor.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {table_username} (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    transaction_type VARCHAR(50),
-                    amount float,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """
+    CREATE TABLE IF NOT EXISTS {table_username} (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        transaction_type VARCHAR(50),
+        amount FLOAT,
+        transaction_datetime DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """
             )
 
-            print("Account created successfully")
-    except Exception:
+            db.commit()
+
+            cprint("Account created successfully", "green")
+        else:
+            cprint("Kindly enter valid details", "red")
+    except Exception as e:
         db.rollback()
-        print(
-            "An error has occurred. Please try again later or contact technical support for assistance."
-        )
+        # print(e)
+        error()
 
-
-# def push_delete_account(account_number):
-#     print("hello")
-# def push_update_account(account_number):
-# def push_display_balance(account_number):
-# def push_update_balance(account_number)
-# def delete_account(account_number):
-# def reactivate_account()
-
-
+#Function to authorize into application
 def account_login():
+    global account_number, is_admin
     username = input("Enter your username: ")
     passkey = getpass.getpass("Enter your passkey: ")
     if username == db_username and passkey == db_password:
         is_admin = True
-        print("You are logged in successfully as " + db_username)
+        cprint("You are logged in successfully as " + db_username, "green")
     else:
         hashed_passkey = hash_passkey(passkey)
         cursor.execute(
-            "SELECT * FROM users WHERE username = %s AND passkey = %s",
+            "SELECT * FROM accounts WHERE username = %s AND passkey = %s",
             (username, hashed_passkey),
         )
         user = cursor.fetchone()
         if user:
-            print("Login successful!")
-            # Perform further actions or return user data
+            if int(user[-1]) == 1:
+                account_number = int(user[0])
+                cprint("Login successful!", "green")
+            else:
+                cprint(
+                    "Your account has been suspended for violating our terms and conditions. For any query contact customer care",
+                    "red",
+                    attrs=["bold"],
+                )
+                exit_program()
         else:
-            print("Invalid username or passkey.")
-            # Handle unsuccessful login
+            cprint("Invalid username or passkey!", "red", attrs=["bold"])
 
 
 # Function to create sample data for the accounts table
@@ -173,7 +228,7 @@ def generate_sample_data():
         fake = Faker("en_IN")
 
         for _ in range(num):
-            balance = random.uniform(0, 1000) * 100
+            balance = round(random.uniform(0, 1000) * 100, 2)
             username = fake.name()
             email = fake.email()
             phone_number = fake.phone_number()
@@ -195,7 +250,7 @@ def generate_sample_data():
 
         db.commit()
 
-        print("Sample data for the main table added successfully")
+        cprint("Sample data for the main table added successfully", "green")
 
     except Exception as e:
         db.rollback()
@@ -204,20 +259,20 @@ def generate_sample_data():
 
 # Function to create a new account
 def create_account():
-    account_number = int(input("Enter account number: "))
-    balance = float(input("Enter initial balance: "))
     username = input("Enter your name: ")
-    email = "enter your email id: "
+    email = input("enter your email id: ")
     phone_number = input("Enter your phone number:")
     passkey = getpass.getpass("Enter your passkey: ")
 
-    push_account(account_number, balance, username, email, phone_number, passkey)
+    push_account(username, email, phone_number, passkey)
 
 
 # Function to update account details
-def update_account(account_number):
+def update_account():
     try:
         # Retrieve existing account details
+        if is_admin:
+            account_number = input("Enter account number: ")
         cursor.execute(
             "SELECT * FROM accounts WHERE account_number = %s", (account_number,)
         )
@@ -278,7 +333,10 @@ def update_account(account_number):
 # Function to transfer funds
 def transfer_funds():
     try:
-        from_account = int(input("Enter account number to transfer from: "))
+        if is_admin:
+            from_account = int(input("Enter account number to transfer from: "))
+        else:
+            from_account = account_number
         to_account = int(input("Enter account number to transfer to: "))
         amount = float(input("Enter amount to transfer: "))
 
@@ -321,60 +379,155 @@ def transfer_funds():
             "UPDATE accounts SET balance = %s WHERE account_number = %s",
             (new_to_balance, to_account),
         )
+        transaction_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        from_table_name = f"transaction_history_{from_account}"
+        to_table_name = f"transaction_history_{to_account}"
+        cursor.execute(
+    f"""
+    INSERT INTO {from_table_name} (transaction_type, amount, transaction_datetime)
+    VALUES ("sent", %s, %s)
+    """,
+    (amount, transaction_datetime)
+)
+        cursor.execute(
+    f"""
+    INSERT INTO {to_table_name} (transaction_type, amount, transaction_datetime)
+    VALUES ("received", %s, %s)
+    """,
+    (amount, transaction_datetime)
+)
 
         db.commit()
-        print("Funds transferred successfully")
+        cprint("{} transferred successfully to {}".format(amount, to_account), "green")
     except Exception:
         db.rollback()
-        print(
-            "An error has occurred. Please try again later or contact technical support for assistance."
-        )
+        error()
 
-
-# Function to display account balance
-def display_balance():
+def withdraw():
+    global account_number
+    amount = float(input("Enter how much do you want to withdraw"))
     try:
-        account_number = int(input("Enter account number: "))
-
         cursor.execute(
-            "SELECT * FROM accounts WHERE account_number = %s", (account_number,)
+            "SELECT * FROM accounts WHERE account_number = %s", (account_number, ),
         )
-        balance = cursor.fetchall()
-        if balance:
-            print(f"Account Number: {balance[0][0]}, Balance: {balance[0][1]}")
-        else:
-            print("Account not found")
-    except Exception:
-        print(
-            "An error has occurred. Please try again later or contact technical support for assistance."
+        account_data = cursor.fetchone()
+
+        # Retrieve the current balances of the account
+        balance = account_data[1]
+
+        # Check if the account has sufficient balance
+        if balance < amount:
+            print("Insufficient balance")
+
+        # Deduct amount from the payee account
+        new_from_balance = balance - amount
+        cursor.execute(
+            "UPDATE accounts SET balance = %s WHERE account_number = %s",
+            (new_from_balance, account_number),
         )
 
+        transaction_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        table_name = f"transaction_history_{account_number}"
+        cursor.execute(
+    f"""
+    INSERT INTO {table_name} (transaction_type, amount, transaction_datetime)
+    VALUES ("withdrawn", %s, %s)
+    """,
+    (amount, transaction_datetime)
+)
 
-# Function to display accounts list detailed
-def display_account_list():
+        db.commit()
+        cprint("successfully withdrawed {}".format(amount), "green")
+    except Exception as e:
+        db.rollback()
+        print(e)
+        error()
+
+def deposit():
+    global account_number
+    amount = float(input("Enter how much do you want to deposit"))
     try:
-        account_number = int(input("Enter account number: "))
-
         cursor.execute(
-            "SELECT * FROM accounts WHERE account_number = %s", (account_number,)
+            "SELECT * FROM accounts WHERE account_number = %s", (account_number, ),
         )
-        balance = cursor.fetchall()
-        if balance:
-            print(f"Account Number: {balance[0][0]}, Balance: {balance[0][1]}")
-        else:
-            print("Account not found")
-    except Exception:
-        print(
-            "An error has occurred. Please try again later or contact technical support for assistance."
+        account_data = cursor.fetchone()
+
+        # Retrieve the current balances of the account
+        balance = account_data[1]
+
+        # Deduct amount from the payee account
+        new_from_balance = balance + amount
+        cursor.execute(
+            "UPDATE accounts SET balance = %s WHERE account_number = %s",
+            (new_from_balance, account_number),
         )
 
-def display_account_info():
-    print("Hello")
+        transaction_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        table_name = f"transaction_history_{account_number}"
+        cursor.execute(
+    f"""
+    INSERT INTO {table_name} (transaction_type, amount, transaction_datetime)
+    VALUES ("deposited", %s, %s)
+    """,
+    (amount, transaction_datetime)
+)
+
+        db.commit()
+        cprint("successfully deposited {}".format(amount), "green")
+    except Exception as e:
+        db.rollback()
+        print(e)
+        error()
+
+def view_transaction_history(account_number):
+    try:
+        table_name = f"transaction_history_{account_number}"
+        cursor.execute(
+            f"SELECT * FROM {table_name}"
+        )
+        transactions = cursor.fetchall()
+
+        if transactions:
+            print("Transaction History:")
+            for transaction in transactions:
+                transaction_id = transaction[0]
+                transaction_type = transaction[1]
+                amount = transaction[2]
+                transaction_datetime = transaction[3]
+                print(f"Transaction ID: {transaction_id}")
+                print(f"Transaction Type: {transaction_type}")
+                print(f"Amount: {amount}")
+                print(f"Transaction DateTime: {transaction_datetime}")
+                print("---------------------------")
+        else:
+            print("No transaction history found.")
+    except Exception as e:
+        print(e)
+        error()
+
+# Function to deactivate account
+def deactivate_account():
+    account_number  = input("Enter account number to deactivate:")
+    query = "UPDATE accounts SET active = 0 WHERE username = %s"
+    cursor.execute(query, (account_number,))
+    db.commit()
+    cprint(f"Account {account_number} deactivated successfully.", 'green')
+
+
+# Functio to reactivate account
+def reactivate_account():
+    account_number  = int(input("Enter account number to reactivate:"))
+    query = "UPDATE accounts SET active = 1 WHERE account_number = %s"
+    cursor.execute(query, (account_number,))
+    db.commit()
+    cprint(f"Account {account_number} reactivated successfully.", 'green')
+
 
 # function to update balance
 def update_balance():
     try:
-        account_number = int(input("Enter account number: "))
+        if is_admin:
+            account_number = int(input("Enter account number: "))
         balance = float(input("Enter the new account balance: "))
         cursor.execute(
             "UPDATE accounts SET balance = %s WHERE account_number = %s",
@@ -383,43 +536,73 @@ def update_balance():
         db.commit()
         print("Account balance updated successfully")
     except Exception:
-        print(
-            "An error has occurred. Please try again later or contact technical support for assistance."
-        )
+        error()
 
-def raise_ticket(account_number):
+
+# Function to raise ticket
+def raise_ticket():
     ticket_id = uuid.uuid4().hex
     issue = input("please enter yor issue")
     cursor.execute(
         "UPDATE accounts SET ticket_number = %s WHERE account_number = %s",
         (ticket_id, account_number),
     )
-    cursor.execute("INSERT INTO ticket_management_system  (ticket_id, account_number, issue) VALUES (%s, %s, %s)", (ticket_id, account_number, issue), ) 
-    print("Your ticket has been raised with id : ", ticket_id)
+    cursor.execute(
+        "INSERT INTO ticket_management_system  (ticket_id, account_number, issue) VALUES (%s, %s, %s)",
+        (ticket_id, account_number, issue),
+    )
+    print("Your ticket has been raised with id : {}".format(ticket_id), "green")
+    print("Kindly remmeber this for future reference")
+
 
 # function to delete account
 def delete_account():
+    global account_number
     try:
-        account_number = int(input("Enter account number: "))
-        cursor.execute(
-            "SELECT * FROM accounts WHERE account_number = %s", (account_number,)
-        )
-        account_exists = cursor.fetchone()
-        if not account_exists:
-            print("The account to which the funds are to be transferred does not exist")
+        user_input = 1
+        if is_admin:
+            account_number = int(input("Enter account number: "))
         else:
+            user_input = input(
+                colored(
+                    "Are you sure you want to drop the database(Enter 1 to continue): ",
+                    "yellow",
+                )
+            )
+        if int(user_input.strip()) == 1:
             cursor.execute(
                 "DELETE FROM accounts WHERE account_number = %s", (account_number,)
             )
             db.commit()
             print("Account deleted successfully")
+            exit_program()
     except Exception:
         print(
             "An error has occurred. Please try again later or contact technical support for assistance."
         )
 
 
-while True:
+# Function to drop the database
+def drop_all():
+    try:
+        user_input = input(
+            colored(
+                "Are you sure you want to drop the database(Enter 1 to continue): ",
+                "yellow",
+            )
+        )
+        if int(user_input.strip()) == 1:
+            cursor.execute("DROP DATABASE funds_transfer_system;")
+            db.commit()
+            cprint("Database has been deleted", "magenta")
+            exit_program()
+
+    except Exception:
+        db.rollback()
+        error()
+
+
+def main():
     choice = input(
         """Please select an option:
     Press 1 to login
@@ -427,22 +610,23 @@ while True:
     Press 3 to exit the program
     """
     )
-
     if choice == "login" or choice == "1":
         account_login()
-        if is_admin():
+        if is_admin:
             while True:
                 choice = int(
                     input(
                         """Please select an option:
-                Press 1 to add an account
-                Press 2 to update account details
-                Press 3 to transfer funds
-                Press 4 to display account balance
-                Press 5 to display account list
-                Press 6 to delete account
-                Press 7 to exit the program
-                """
+Press 1 to add an account
+Press 2 to update account details
+Press 3 to transfer funds
+Press 4 to generate sample data
+Press 5 to deactivate account
+Press 6 to reactivate account
+Press 7 to diplay account list
+Press 8 to drop databse
+Press 9 to exit
+"""
                     )
                 )
                 if choice == 1:
@@ -452,12 +636,16 @@ while True:
                 elif choice == 3:
                     transfer_funds()
                 elif choice == 4:
-                    display_balance()
+                    generate_sample_data()
                 elif choice == 5:
-                    display_account_list()
+                    deactivate_account()
                 elif choice == 6:
-                    delete_account()
+                    reactivate_account()
                 elif choice == 7:
+                    print()
+                elif choice == 8:
+                    drop_all()    
+                elif choice == 9:
                     exit()
                 else:
                     print("Invalid choice")
@@ -478,26 +666,27 @@ while True:
                     )
                 )
                 if choice == 1:
-                    create_account()
-                elif choice == 2:
                     update_account()
-                elif choice == 3:
+                elif choice == 2:
                     transfer_funds()
+                # elif choice == 3:
+                #     display_balance()
                 elif choice == 4:
-                    display_balance()
-                elif choice == 5:
-                    display_account_list()
+                    deactivate_account()
+                # elif choice == 5:
+                #     display_account_list()
                 elif choice == 6:
                     delete_account()
                 elif choice == 7:
-                    exit()
+                    exit_program()
                 else:
                     print("Invalid choice")
 
     elif choice == "signup" or choice == "2":
         create_account()
     elif choice == "exit" or choice == "3":
-        print("Thank you for using our software. Have a nice day!")
-        exit()
+        exit_program
     else:
         print("Invalid choice. Please enter 'login' or 'signup'.")
+
+main()
